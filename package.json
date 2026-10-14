@@ -1,0 +1,10 @@
+{
+  "name": "notetaker",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "npm -w apps/desktop run tauri dev",
+    "build": "npm -w apps/desktop run tauri build",
+    "test": "npm -w apps/desktop test && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml"
+  }
+}
