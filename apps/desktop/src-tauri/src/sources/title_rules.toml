@@ -1,0 +1,31 @@
+# Window-title rules for source detection. These are the defaults built into the app.
+# To change them without rebuilding, copy this file to
+#   %LOCALAPPDATA%\dev.vlado.notetaker\title_rules.toml
+# and edit the copy; it replaces this one at the next start.
+# Zoom and Teams titles differ by version and language, so the Zoom/Teams values are
+# starting points to check against the Diagnostics "Source probe" during a real call.
+
+[browser]
+# The browser's own name at the end of the window title. Edge writes "Microsoft<U+200B> Edge";
+# the zero-width space is removed before matching.
+suffixes = [" - Google Chrome", " - Microsoft Edge"]
+
+[sites]
+# Site names at the end of the page title.
+youtube = [" - YouTube"]
+datacamp = [" | DataCamp", " - DataCamp"]
+
+[zoom]
+# A Zoom.exe window is the meeting if its class or its exact title is listed here.
+meeting_classes = ["ZPContentViewWndClass"]
+meeting_titles = ["Zoom Meeting"]
+
+[teams]
+separator = " | "
+# The last piece of every Teams title.
+app_name = "Microsoft Teams"
+# A title that starts with one of these is the main Teams window, not a meeting.
+nav_words = [
+    "Activity", "Apps", "Calendar", "Calls", "Chat", "Communities", "Copilot", "Files",
+    "Home", "Notifications", "OneDrive", "Search", "Settings", "Tasks", "Teams", "Viva Engage",
+]

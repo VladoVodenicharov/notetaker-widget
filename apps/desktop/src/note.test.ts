@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MarkdownManager } from "@tiptap/markdown";
-import { buildNote, defaultFileName, toMarkdown, wordCount } from "./note";
+import { buildNote, buildSession, defaultFileName, toMarkdown, wordCount } from "./note";
 import { extensions, MARKDOWN_BLOCK } from "./editor/extensions";
 
 const start = new Date(2026, 9, 13, 19, 42);
@@ -34,6 +34,31 @@ describe("buildNote", () => {
       'title: "Say \\"hi\\": now"',
     );
     expect(buildNote({ id: "x", title: "  ", startedAt: start, endedAt: end }, "")).toContain("# Untitled");
+  });
+});
+
+describe("buildNote with sources", () => {
+  const yt = { platform: "youtube" as const, title: "Intro to SQL", channel: "DataLemur" };
+  const teams = { platform: "teams" as const, title: "Standup", channel: null };
+
+  it("records the main source in the front matter and under the title", () => {
+    const md = buildNote({ id: "abc", title: "SQL", startedAt: start, endedAt: end, sources: [yt] }, "- one\n");
+    expect(md).toContain(
+      ["notetaker_id: abc", "platform: youtube", 'channel: "DataLemur"', "sources:", '  - "YouTube · Intro to SQL (DataLemur)"', "---"].join("\n"),
+    );
+    expect(md).toContain("# SQL\n\n**Source:** YouTube · Intro to SQL (DataLemur)\n\n## 2026-10-13 (19:42–20:31)");
+  });
+
+  it("lists every source once", () => {
+    const md = buildNote({ id: "abc", title: "Mixed", startedAt: start, endedAt: end, sources: [yt, teams, yt] }, "x");
+    expect(md).toContain(["sources:", '  - "YouTube · Intro to SQL (DataLemur)"', '  - "Teams · Standup"', "---"].join("\n"));
+    expect(md).toContain("**Sources:** YouTube · Intro to SQL (DataLemur); Teams · Standup");
+  });
+});
+
+describe("buildSession", () => {
+  it("is the dated heading and the notes, ready to append", () => {
+    expect(buildSession({ startedAt: start, endedAt: end }, "\n- two\n\n")).toBe("## 2026-10-13 (19:42–20:31)\n\n- two");
   });
 });
 

@@ -1,11 +1,13 @@
 mod appbar;
+mod foreground;
 mod hotkeys;
 mod notes;
 mod settings;
+mod sources;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window("main")
@@ -42,14 +44,21 @@ fn panel_diagnostics(window: WebviewWindow) -> Option<appbar::Diagnostics> {
 
 fn create_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Show / hide panel", true, None::<&str>)?;
+    let screen = MenuItem::with_id(app, "screen", "Move to the next screen", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Notetaker", true, None::<&str>)?;
     TrayIconBuilder::new()
         .icon(app.default_window_icon().expect("bundled icon").clone())
         .tooltip("Notetaker")
-        .menu(&Menu::with_items(app, &[&toggle, &quit])?)
+        .menu(&Menu::with_items(app, &[&toggle, &screen, &quit])?)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "toggle" => toggle_panel(app),
+            "screen" => {
+                if let Some(w) = main_window(app) {
+                    settings::move_to_next_screen(app.clone(), w);
+                    let _ = app.emit("screens-changed", ());
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -74,22 +83,31 @@ pub fn run() {
         .setup(|app| {
             let window = main_window(app.handle()).expect("main window");
             let (edge, width_dip) = settings::load_dock(app.handle());
-            appbar::attach(&window, edge, width_dip)?;
+            appbar::attach(&window, edge, width_dip, settings::load_monitor(app.handle()))?;
             window.show()?;
             create_tray(app.handle())?;
             hotkeys::register(app.handle());
+            foreground::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             notes::save_note,
+            notes::append::read_note,
+            notes::append::append_session,
+            notes::index::index_note,
+            notes::index::suggest_note,
             notes::drafts::save_draft,
             notes::drafts::load_draft,
             notes::drafts::delete_draft,
             settings::get_dock,
             settings::set_dock,
+            settings::list_screens,
+            settings::move_to_next_screen,
             hotkeys::hotkey_warning,
             hide_panel,
             panel_diagnostics,
+            foreground::get_sources,
+            foreground::probe_windows,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Notetaker");

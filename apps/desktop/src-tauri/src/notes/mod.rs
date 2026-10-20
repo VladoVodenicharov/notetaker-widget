@@ -1,6 +1,8 @@
 //! Writing notes (and drafts of unfinished ones) to disk.
 
+pub mod append;
 pub mod drafts;
+pub mod index;
 mod sanitize;
 
 use sanitize::sanitize_file_name;

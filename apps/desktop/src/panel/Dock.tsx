@@ -1,5 +1,6 @@
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export type Dock = { edge: "left" | "right"; widthDip: number };
 
@@ -12,6 +13,29 @@ export function useDock() {
   const applyDock = (next: Dock) => void invoke<Dock>("set_dock", next).then(setDock);
   return [dock, applyDock] as const;
 }
+
+export type Screen = { device: string; width: number; height: number; primary: boolean; current: boolean };
+
+/** The connected screens, and a function that docks the panel on the next one (Rust remembers the choice). */
+export function useScreens() {
+  const [screens, setScreens] = useState<Screen[]>([]);
+  useEffect(() => {
+    const refresh = () => void invoke<Screen[]>("list_screens").then(setScreens);
+    refresh();
+    // The tray menu can move the panel too; a plugged-in screen shows up when the window regains focus.
+    const unlisten = listen("screens-changed", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      void unlisten.then((f) => f());
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+  const moveToNext = () => void invoke<Screen[]>("move_to_next_screen").then(setScreens);
+  return [screens, moveToNext] as const;
+}
+
+/** "Screen 2 · 1920×1080 (main)", numbered left to right as Windows lists them after sorting. */
+export const screenLabel = (s: Screen, index: number) => `Screen ${index + 1} · ${s.width}×${s.height}${s.primary ? " (main)" : ""}`;
 
 // Same range as `clamp_width` in Rust; here only to keep the guide line honest.
 const MIN_WIDTH = 320;

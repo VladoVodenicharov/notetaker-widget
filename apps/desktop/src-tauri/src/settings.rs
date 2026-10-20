@@ -1,4 +1,4 @@
-//! Dock side and width, kept in the same `settings.json` store the frontend uses.
+//! Dock side, width and screen, kept in the same `settings.json` store the frontend uses.
 
 use crate::appbar::{self, Edge};
 use serde::Serialize;
@@ -34,6 +34,32 @@ pub fn set_dock(app: AppHandle, window: WebviewWindow, edge: Edge, width_dip: u3
         store.set("widthDip", width_dip);
     }
     Dock { edge, width_dip }
+}
+
+/// The screen picked last time (device name), if any.
+pub fn load_monitor(app: &AppHandle) -> Option<String> {
+    app.store(STORE).ok()?.get("monitor")?.as_str().map(str::to_owned)
+}
+
+#[tauri::command]
+pub fn list_screens(window: WebviewWindow) -> Vec<appbar::Screen> {
+    appbar::screens(&window)
+}
+
+/// Docks on the next screen (left to right, wrapping around) and remembers it.
+/// Returns the screens afterwards. With one screen it does nothing.
+#[tauri::command]
+pub fn move_to_next_screen(app: AppHandle, window: WebviewWindow) -> Vec<appbar::Screen> {
+    let screens = appbar::screens(&window);
+    if screens.len() > 1 {
+        let current = screens.iter().position(|s| s.current).unwrap_or(0);
+        let next = screens[(current + 1) % screens.len()].device.clone();
+        appbar::set_monitor(&window, next.clone());
+        if let Ok(store) = app.store(STORE) {
+            store.set("monitor", next);
+        }
+    }
+    appbar::screens(&window)
 }
 
 #[tauri::command]

@@ -2,16 +2,19 @@ import { useEffect, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Info, Minus, PanelLeft, PanelRight } from "lucide-react";
+import { Info, Minus, Monitor, PanelLeft, PanelRight } from "lucide-react";
 import { extensions } from "./editor/extensions";
 import { useSession } from "./session";
 import { discardDraft, loadDraft, useAutosave, type Draft } from "./autosave";
 import { Header } from "./panel/Header";
+import { ContinueSuggestion, PreviouslyBox } from "./panel/Continue";
+import { SourceSection } from "./editor/sourceSection";
 import { FinishSheet } from "./panel/FinishSheet";
 import { SavedToast } from "./panel/SavedToast";
 import { Diagnostics } from "./panel/Diagnostics";
 import { RecoveryDialog } from "./panel/RecoveryDialog";
-import { ResizeHandle, useDock } from "./panel/Dock";
+import { ResizeHandle, screenLabel, useDock, useScreens, type Screen } from "./panel/Dock";
+import { useFollowSource, useSources } from "./useFollowSource";
 
 export default function App() {
   const markStarted = useSession((s) => s.markStarted);
@@ -22,7 +25,8 @@ export default function App() {
   // A new editor per session, so undo can't bring back an already saved note.
   const editor = useEditor(
     {
-      extensions,
+      // Section headings after a source switch; only the live editor needs them.
+      extensions: [...extensions, SourceSection.configure({ take: () => useSession.getState().takeSection() })],
       autofocus: "end",
       content: restored?.id === sessionId ? restored.doc : undefined,
       onUpdate: ({ editor }) => {
@@ -36,6 +40,9 @@ export default function App() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [hotkeyWarning, setHotkeyWarning] = useState<string | null>(null);
   const [dock, applyDock] = useDock();
+  const [screens, moveToNextScreen] = useScreens();
+  const sources = useSources();
+  useFollowSource(sources);
   useAutosave(editor, recovery === null);
 
   useEffect(() => {
@@ -52,7 +59,19 @@ export default function App() {
   // The new session id gives a fresh editor, created with the draft's content.
   function resume(draft: Draft) {
     setRestored(draft);
-    useSession.setState((s) => ({ id: draft.id, title: draft.title, folder: draft.folder ?? s.folder, startedAt: draft.startedAt }));
+    const segments = draft.segments ?? [];
+    useSession.setState((s) => ({
+      id: draft.id,
+      title: draft.title,
+      titleEdited: true,
+      folder: draft.folder ?? s.folder,
+      startedAt: draft.startedAt,
+      source: draft.source ?? null,
+      segments,
+      // Notes typed after recovery continue the last section; no heading is pending.
+      sections: { writingKey: segments[segments.length - 1]?.key ?? null, pending: null, labelled: segments.length > 1 },
+      continuing: draft.continuing ?? null,
+    }));
     setRecovery(null);
   }
 
@@ -80,6 +99,7 @@ export default function App() {
             {dock.edge === "right" ? <PanelLeft size={16} /> : <PanelRight size={16} />}
           </button>
         )}
+        {screens.length > 1 && <ScreenButton screens={screens} onMove={moveToNextScreen} />}
         <button className="icon-btn" title="Docking diagnostics" onClick={() => setShowDiagnostics((v) => !v)}>
           <Info size={16} />
         </button>
@@ -95,9 +115,11 @@ export default function App() {
           </button>
         </p>
       )}
-      {showDiagnostics && <Diagnostics />}
+      {showDiagnostics && <Diagnostics sources={sources} />}
 
-      <Header />
+      <Header sources={sources} />
+      <ContinueSuggestion />
+      <PreviouslyBox />
       <EditorContent editor={editor} className="min-h-0 flex-1 overflow-y-auto px-6" />
 
       <footer className="flex items-center justify-between border-t border-line px-6 py-3">
@@ -138,6 +160,17 @@ export default function App() {
         />
       )}
     </div>
+  );
+}
+
+function ScreenButton({ screens, onMove }: { screens: Screen[]; onMove: () => void }) {
+  const current = Math.max(0, screens.findIndex((s) => s.current));
+  const next = (current + 1) % screens.length;
+  return (
+    <button className="icon-btn flex items-center gap-1" title={`Move to ${screenLabel(screens[next], next)}`} onClick={onMove}>
+      <Monitor size={16} />
+      <span className="text-xs tabular-nums">{current + 1}</span>
+    </button>
   );
 }
 

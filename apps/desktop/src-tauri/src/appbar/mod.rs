@@ -10,15 +10,19 @@ use serde::Serialize;
 use std::sync::Mutex;
 use tauri::WebviewWindow;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::Graphics::Gdi::{
+    EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MONITORINFOEXW, MonitorFromWindow,
+};
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::core::w;
+use windows::core::{BOOL, w};
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct State {
     edge: Edge,
+    /// The screen to dock on, by device name (`\\.\DISPLAY2`). `None` or an unplugged screen: the nearest one.
+    monitor: Option<String>,
     width_dip: u32,
     docked: bool,
     fullscreen: bool,
@@ -31,7 +35,7 @@ struct State {
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
 fn state() -> Option<State> {
-    *STATE.lock().unwrap()
+    STATE.lock().unwrap().clone()
 }
 
 fn update(f: impl FnOnce(&mut State)) {
@@ -41,11 +45,12 @@ fn update(f: impl FnOnce(&mut State)) {
 }
 
 /// Must run on the main thread (the window's owner), e.g. in `setup`.
-pub fn attach(window: &WebviewWindow, edge: Edge, width_dip: u32) -> tauri::Result<()> {
+pub fn attach(window: &WebviewWindow, edge: Edge, width_dip: u32, monitor: Option<String>) -> tauri::Result<()> {
     let hwnd = window.hwnd()?;
     unsafe {
         *STATE.lock().unwrap() = Some(State {
             edge,
+            monitor,
             width_dip: geometry::clamp_width(width_dip),
             docked: false,
             fullscreen: false,
@@ -91,6 +96,87 @@ pub fn set_dock(window: &WebviewWindow, edge: Edge, width_dip: u32) -> u32 {
     width_dip
 }
 
+/// Docks on another screen. Like switching sides, the strip on the old screen is released first.
+pub fn set_monitor(window: &WebviewWindow, device: String) {
+    let Ok(hwnd) = window.hwnd() else { return };
+    let Some(s) = state() else { return };
+    if s.docked {
+        remove(hwnd);
+    }
+    update(|s| s.monitor = Some(device));
+    if s.docked {
+        dock(window);
+    }
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Screen {
+    /// Device name, e.g. `\\.\DISPLAY1`.
+    pub device: String,
+    pub width: i32,
+    pub height: i32,
+    pub primary: bool,
+    /// The panel is docked here.
+    pub current: bool,
+}
+
+struct FoundMonitor {
+    handle: HMONITOR,
+    device: String,
+    rect: RECT,
+    primary: bool,
+}
+
+/// All screens, left to right.
+fn monitors() -> Vec<FoundMonitor> {
+    unsafe extern "system" fn each(handle: HMONITOR, _dc: HDC, _rect: *mut RECT, param: LPARAM) -> BOOL {
+        let found = unsafe { &mut *(param.0 as *mut Vec<FoundMonitor>) };
+        let mut info = MONITORINFOEXW::default();
+        info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
+        if unsafe { GetMonitorInfoW(handle, &mut info as *mut MONITORINFOEXW as *mut MONITORINFO) }.as_bool() {
+            let len = info.szDevice.iter().position(|&c| c == 0).unwrap_or(info.szDevice.len());
+            found.push(FoundMonitor {
+                handle,
+                device: String::from_utf16_lossy(&info.szDevice[..len]),
+                rect: info.monitorInfo.rcMonitor,
+                primary: info.monitorInfo.dwFlags & 1 != 0, // MONITORINFOF_PRIMARY
+            });
+        }
+        BOOL(1)
+    }
+    let mut found: Vec<FoundMonitor> = Vec::new();
+    unsafe {
+        let _ = EnumDisplayMonitors(None, None, Some(each), LPARAM(&mut found as *mut _ as isize));
+    }
+    found.sort_by_key(|m| (m.rect.left, m.rect.top));
+    found
+}
+
+/// The chosen screen if it is still connected, otherwise the one the window is on.
+fn target_monitor(hwnd: HWND, s: &State) -> HMONITOR {
+    s.monitor
+        .as_deref()
+        .and_then(|device| monitors().into_iter().find(|m| m.device == device))
+        .map(|m| m.handle)
+        .unwrap_or_else(|| unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) })
+}
+
+pub fn screens(window: &WebviewWindow) -> Vec<Screen> {
+    let (Ok(hwnd), Some(s)) = (window.hwnd(), state()) else { return Vec::new() };
+    let current = target_monitor(hwnd, &s);
+    monitors()
+        .into_iter()
+        .map(|m| Screen {
+            current: m.handle == current,
+            width: m.rect.right - m.rect.left,
+            height: m.rect.bottom - m.rect.top,
+            primary: m.primary,
+            device: m.device,
+        })
+        .collect()
+}
+
 /// The current side and width (DIP).
 pub fn placement() -> Option<(Edge, u32)> {
     state().map(|s| (s.edge, s.width_dip))
@@ -124,12 +210,21 @@ fn appbar_data(hwnd: HWND, s: &State) -> APPBARDATA {
     }
 }
 
-fn monitor_info(hwnd: HWND) -> MONITORINFO {
+fn monitor_info(monitor: HMONITOR) -> MONITORINFO {
     let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
     unsafe {
-        let _ = GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mi);
+        let _ = GetMonitorInfoW(monitor, &mut mi);
     }
     mi
+}
+
+/// The screen's own DPI: the window may still be on another screen with a different scale.
+fn monitor_dpi(monitor: HMONITOR, hwnd: HWND) -> u32 {
+    let (mut x, mut y) = (0u32, 0u32);
+    match unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut x, &mut y) } {
+        Ok(()) if x > 0 => x,
+        _ => unsafe { GetDpiForWindow(hwnd) },
+    }
 }
 
 fn reposition(hwnd: HWND) {
@@ -137,9 +232,10 @@ fn reposition(hwnd: HWND) {
     if !s.docked {
         return;
     }
-    let width = geometry::to_px(s.width_dip, unsafe { GetDpiForWindow(hwnd) });
+    let monitor = target_monitor(hwnd, &s);
+    let width = geometry::to_px(s.width_dip, monitor_dpi(monitor, hwnd));
     let mut abd = appbar_data(hwnd, &s);
-    abd.rc = geometry::dock(monitor_info(hwnd).rcMonitor.into(), s.edge, width).into();
+    abd.rc = geometry::dock(monitor_info(monitor).rcMonitor.into(), s.edge, width).into();
     unsafe { SHAppBarMessage(ABM_QUERYPOS, &mut abd) };
     abd.rc = geometry::dock(abd.rc.into(), s.edge, width).into();
     unsafe { SHAppBarMessage(ABM_SETPOS, &mut abd) };
@@ -238,7 +334,7 @@ pub struct Diagnostics {
 pub fn diagnostics(window: &WebviewWindow) -> Option<Diagnostics> {
     let hwnd = window.hwnd().ok()?;
     let s = state()?;
-    let mi = monitor_info(hwnd);
+    let mi = monitor_info(target_monitor(hwnd, &s));
     let mut wr = RECT::default();
     let dpi = unsafe {
         let _ = GetWindowRect(hwnd, &mut wr);
@@ -265,5 +361,17 @@ impl From<RECT> for Rect {
 impl From<Rect> for RECT {
     fn from(r: Rect) -> Self {
         RECT { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+    }
+}
+
+#[cfg(test)]
+mod live {
+    /// Lists the real screens: `cargo test live_screens -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads the live desktop"]
+    fn live_screens() {
+        for m in super::monitors() {
+            println!("{} {:?} primary={}", m.device, super::Rect::from(m.rect), m.primary);
+        }
     }
 }
