@@ -2,6 +2,7 @@
 //! a meeting) and picks the most likely one. Everything here is pure, so it is unit-tested
 //! with made-up windows and a fake clock; `foreground` supplies the real inputs.
 
+pub mod control;
 pub mod rules;
 pub mod smtc;
 mod teams;

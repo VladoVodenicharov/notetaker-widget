@@ -15,6 +15,8 @@ import { Diagnostics } from "./panel/Diagnostics";
 import { RecoveryDialog } from "./panel/RecoveryDialog";
 import { ResizeHandle, screenLabel, useDock, useScreens, type Screen } from "./panel/Dock";
 import { useFollowSource, useSources } from "./useFollowSource";
+import { usePlayback } from "./usePlayback";
+import { VideoControls } from "./panel/VideoControls";
 
 export default function App() {
   const markStarted = useSession((s) => s.markStarted);
@@ -44,6 +46,7 @@ export default function App() {
   const sources = useSources();
   useFollowSource(sources);
   useAutosave(editor, recovery === null);
+  const playback = usePlayback(editor, sources);
 
   useEffect(() => {
     loadDraft().then(setRecovery, () => setRecovery(null));
@@ -123,6 +126,12 @@ export default function App() {
       <EditorContent editor={editor} className="min-h-0 flex-1 overflow-y-auto px-6" />
 
       <footer className="flex items-center justify-between border-t border-line px-6 py-3">
+        <VideoControls
+          source={playback.source}
+          onToggle={playback.toggle}
+          pauseWhileTyping={playback.pauseWhileTyping}
+          onTogglePauseWhileTyping={playback.togglePauseWhileTyping}
+        />
         <Elapsed />
         <button className="btn-primary" title="Finish (Ctrl+Enter)" onClick={() => setFinishing(true)}>
           Finish
