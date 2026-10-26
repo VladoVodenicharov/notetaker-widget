@@ -1,4 +1,5 @@
-//! Global hotkeys. For now only Ctrl+Alt+N, which bounces focus between the panel and the video.
+//! Global hotkeys: Ctrl+Alt+N bounces focus between the panel and the video,
+//! Ctrl+Alt+Space plays or pauses the video.
 
 use std::sync::atomic::{AtomicIsize, Ordering};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -14,22 +15,28 @@ pub struct Warning(Option<String>);
 
 pub fn register(app: &AppHandle) {
     let focus = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyN);
+    let play = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::Space);
+    let mut warnings = Vec::new();
     let result = app.global_shortcut().on_shortcut(focus, |app, _, event| {
         if event.state == ShortcutState::Pressed {
             ping_pong(app);
         }
     });
-    let warning = match result {
-        Ok(()) => {
-            eprintln!("hotkey Ctrl+Alt+N registered");
-            None
+    if let Err(e) = result {
+        eprintln!("hotkey Ctrl+Alt+N failed: {e}");
+        warnings.push("Ctrl+Alt+N is used by another app, so that hotkey is off.");
+    }
+    // The panel knows which source is being watched, so it does the toggling.
+    let result = app.global_shortcut().on_shortcut(play, |app, _, event| {
+        if event.state == ShortcutState::Pressed {
+            let _ = app.emit("toggle-playback", ());
         }
-        Err(e) => {
-            eprintln!("hotkey Ctrl+Alt+N failed: {e}");
-            Some("Ctrl+Alt+N is used by another app, so the hotkey is off.".into())
-        }
-    };
-    app.manage(Warning(warning));
+    });
+    if let Err(e) = result {
+        eprintln!("hotkey Ctrl+Alt+Space failed: {e}");
+        warnings.push("Ctrl+Alt+Space is used by another app, so that hotkey is off.");
+    }
+    app.manage(Warning((!warnings.is_empty()).then(|| warnings.join(" "))));
 }
 
 #[tauri::command]

@@ -108,6 +108,7 @@ pub fn run() {
             panel_diagnostics,
             foreground::get_sources,
             foreground::probe_windows,
+            sources::control::media_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Notetaker");
