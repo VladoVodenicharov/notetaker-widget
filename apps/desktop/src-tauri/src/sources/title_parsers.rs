@@ -78,10 +78,62 @@ fn is_meet_code(s: &str) -> bool {
         && parts.iter().zip([3, 4, 3]).all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_lowercase()))
 }
 
-/// Does a media session's title belong to this page title? Edge may leave a " - Profile" tail.
+/// File extensions a video hosting page puts in its title ("Lecture 3.mp4 - SharePoint").
+const MEDIA_EXTENSIONS: [&str; 5] = [".mp4", ".mov", ".m4v", ".webm", ".mkv"];
+/// Hosting sites whose name ends the page title but not the media title.
+const HOST_SUFFIXES: [&str; 4] = [" - sharepoint", " - onedrive", " - microsoft stream", " | microsoft stream"];
+
+/// How well a media title fits a page title. `Exact` beats `Loose` when several sessions fit.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub enum PageMatch {
+    Loose,
+    Exact,
+}
+
+/// Lowercase, without the hosting site (and an Edge profile after it) and without a file extension.
+fn normalize_media(s: &str) -> String {
+    let mut s = s.trim().to_lowercase();
+    for suffix in HOST_SUFFIXES {
+        let Some(at) = s.rfind(suffix) else { continue };
+        let tail = &s[at + suffix.len()..];
+        if tail.is_empty() || tail.strip_prefix(" - ").is_some_and(|p| !p.contains(" - ")) {
+            s.truncate(at);
+        }
+    }
+    for ext in MEDIA_EXTENSIONS {
+        if s.ends_with(ext) {
+            s.truncate(s.len() - ext.len());
+        } else if let Some(at) = s.find(&format!("{ext} - ")) {
+            s.replace_range(at..at + ext.len(), "");
+        }
+    }
+    s.trim().to_owned()
+}
+
+/// Is `long` the same as `short`, or `short` followed by " - something" (an Edge profile, a site)?
+fn same_or_dash_prefix(long: &str, short: &str) -> bool {
+    long == short || long.starts_with(&format!("{short} - "))
+}
+
+/// Does a media session's title belong to this page title, and how closely?
+/// Exact: same text, or the page adds an Edge " - Profile" tail. Loose: the same once the hosting
+/// site and file extension are dropped, either one possibly longer at a " - " boundary.
+pub fn page_match(page: &str, media_title: &str) -> Option<PageMatch> {
+    let (page, media) = (page.trim().to_lowercase(), media_title.trim().to_lowercase());
+    if media.is_empty() {
+        return None;
+    }
+    if same_or_dash_prefix(&page, &media) {
+        return Some(PageMatch::Exact);
+    }
+    let (page, media) = (normalize_media(&page), normalize_media(&media));
+    let loose = !page.is_empty() && !media.is_empty() && (same_or_dash_prefix(&page, &media) || same_or_dash_prefix(&media, &page));
+    loose.then_some(PageMatch::Loose)
+}
+
+#[cfg(test)]
 pub fn same_page(page: &str, media_title: &str) -> bool {
-    let (page, media) = (page.trim(), media_title.trim());
-    !media.is_empty() && (page.eq_ignore_ascii_case(media) || page.to_lowercase().starts_with(&format!("{} - ", media.to_lowercase())))
+    page_match(page, media_title).is_some()
 }
 
 #[cfg(test)]
@@ -151,5 +203,33 @@ mod tests {
         assert!(same_page("Podcast ep 4 - Personal", "Podcast ep 4"));
         assert!(!same_page("Intro to SQL", "Intro"));
         assert!(!same_page("Anything", ""));
+    }
+
+    #[test]
+    fn hosted_video_files_match_without_extension_and_site() {
+        assert!(same_page("Lecture 3.mp4 - SharePoint", "Lecture 3"));
+        assert_eq!(page_match("Lecture 3.mp4 - SharePoint", "Lecture 3"), Some(PageMatch::Loose));
+        assert!(same_page("Lecture 3 | Microsoft Stream", "Lecture 3.mp4"));
+        assert!(same_page("Lecture 3.mov - OneDrive", "lecture 3.MOV"));
+    }
+
+    #[test]
+    fn hosted_video_with_an_edge_profile_tail() {
+        assert!(same_page("Lecture 3.mp4 - SharePoint - Personal", "Lecture 3"));
+        assert!(same_page("Lecture 3.mp4 - Personal", "Lecture 3"));
+    }
+
+    #[test]
+    fn unrelated_titles_still_do_not_match() {
+        assert!(!same_page("Lecture 3.mp4 - SharePoint", "Lecture 4"));
+        assert!(!same_page("Lecture 30.mp4 - SharePoint", "Lecture 3"));
+        assert!(!same_page("Gmail", "Lo-fi radio"));
+        assert!(!same_page("SharePoint", ".mp4"));
+    }
+
+    #[test]
+    fn exact_beats_loose() {
+        assert_eq!(page_match("Intro to SQL", "intro to sql"), Some(PageMatch::Exact));
+        assert!(PageMatch::Exact > PageMatch::Loose);
     }
 }

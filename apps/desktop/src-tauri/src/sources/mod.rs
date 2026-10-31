@@ -110,10 +110,9 @@ fn from_window(window: &RawWindow, inputs: &Inputs) -> Option<Candidate> {
     match exe.as_str() {
         "chrome.exe" | "msedge.exe" => {
             let parsed = title_parsers::parse_browser_title(&window.title, &rules.browser, &rules.sites)?;
-            let session = inputs
-                .media
-                .iter()
-                .find(|m| smtc::browser_exe(&m.app_id) == Some(exe.as_str()) && title_parsers::same_page(&parsed.page, &m.title));
+            let session = control::by_title(inputs.media, &exe, &parsed.page)
+                .or_else(|| only_browser_window(inputs, &exe).then(|| control::only_session(inputs.media, &exe)).flatten())
+                .map(|i| &inputs.media[i]);
             let (platform, key_prefix) = match parsed.site {
                 Site::YouTube => (Platform::Youtube, "youtube"),
                 Site::DataCamp => (Platform::Datacamp, "datacamp"),
@@ -121,8 +120,9 @@ fn from_window(window: &RawWindow, inputs: &Inputs) -> Option<Candidate> {
                     let title = format!("Google Meet {}", parsed.page);
                     return Some(make(format!("meet:{}", parsed.page), Platform::Meet, title, true));
                 }
-                // Other sites only count while they play something.
-                Site::Other if session.is_some_and(|s| s.playing) => (Platform::Web, "web"),
+                // Other sites only count while they have a media session, playing or paused
+                // (paused by "pause while I type", it must stay a source to be resumed).
+                Site::Other if session.is_some() => (Platform::Web, "web"),
                 Site::Other => return None,
             };
             let mut candidate = make(format!("{key_prefix}:{}", normalize(&parsed.page)), platform, parsed.page, false);
@@ -140,6 +140,16 @@ fn from_window(window: &RawWindow, inputs: &Inputs) -> Option<Candidate> {
         }
         _ => None,
     }
+}
+
+/// The browser's only session may belong to a page whose title doesn't fit (SharePoint names the
+/// media differently), but only when no other window of that browser could own it instead.
+fn only_browser_window(inputs: &Inputs, exe: &str) -> bool {
+    let rules = inputs.rules;
+    let mut own = inputs.windows.iter().filter(|w| {
+        w.exe.eq_ignore_ascii_case(exe) && title_parsers::parse_browser_title(&w.title, &rules.browser, &rules.sites).is_some()
+    });
+    own.next().is_some() && own.next().is_none()
 }
 
 /// Two windows of the same source (a Zoom call has several): one candidate, with the best of both.
@@ -211,12 +221,37 @@ mod tests {
     }
 
     #[test]
-    fn other_sites_count_only_while_playing() {
+    fn other_sites_count_only_with_a_media_session() {
         let windows = [window(1, "chrome.exe", "c", "Gmail - Google Chrome"), window(2, "chrome.exe", "c", "Lo-fi radio - Google Chrome")];
         let media = [session("Chrome", "Lo-fi radio", "", true)];
         let snap = run(&windows, &media, &[], 0);
         assert_eq!(snap.candidates.len(), 1);
         assert_eq!(snap.candidates[0].platform, Platform::Web);
+    }
+
+    #[test]
+    fn a_paused_web_video_stays_a_source_but_ranks_below_a_playing_one() {
+        let windows = [window(1, "chrome.exe", "c", "Lecture 3.mp4 - SharePoint - Google Chrome"), window(2, "chrome.exe", "c", "Lo-fi radio - Google Chrome")];
+        let media = [session("Chrome", "Lecture 3", "", false), session("Chrome", "Lo-fi radio", "", true)];
+        let snap = run(&windows, &media, &[], 0);
+        let found: Vec<_> = snap.candidates.iter().map(|c| (c.title.as_str(), c.is_playing)).collect();
+        assert_eq!(found, [("Lo-fi radio", true), ("Lecture 3.mp4 - SharePoint", false)]);
+        assert_eq!(snap.candidates[1].platform, Platform::Web);
+    }
+
+    #[test]
+    fn the_browsers_only_session_is_used_for_its_only_window_and_spotify_never_is() {
+        let lecture = window(1, "chrome.exe", "c", "Lecture 3 - SharePoint - Google Chrome");
+        let spotify = session("Spotify.exe", "Lecture 3", "Band", true);
+        // Only Spotify plays something: the Chrome page is not a source.
+        assert!(run(&[lecture.clone()], &[spotify.clone()], &[], 0).candidates.is_empty());
+        // Chrome's one session has an unrelated title, but Chrome has one window: it is that page's.
+        let media = [spotify, session("Chrome", "Untitled video", "", true)];
+        let snap = run(&[lecture.clone()], &media, &[], 0);
+        assert_eq!((snap.candidates.len(), snap.candidates[0].is_playing, snap.candidates[0].channel.as_deref()), (1, true, None));
+        // With a second Chrome window it could be either page's, so no guess.
+        let gmail = window(2, "chrome.exe", "c", "Inbox - Gmail - Google Chrome");
+        assert!(run(&[lecture, gmail], &media, &[], 0).candidates.is_empty());
     }
 
     #[test]
