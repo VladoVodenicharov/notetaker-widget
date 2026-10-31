@@ -203,6 +203,14 @@ pub fn probe_windows() -> Vec<RawWindow> {
     enumerate_windows()
 }
 
+/// Every media session and why each source did or didn't get one, for "pause while I type" problems.
+#[tauri::command]
+pub async fn probe_media() -> sources::control::MediaProbe {
+    let read = || smtc::manager().map(|m| smtc::sessions(&m)).unwrap_or_default();
+    let sessions = tauri::async_runtime::spawn_blocking(read).await.unwrap_or_default();
+    sources::control::probe(sessions, &get_sources().candidates)
+}
+
 #[cfg(test)]
 mod live {
     use super::*;

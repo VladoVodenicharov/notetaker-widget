@@ -6,6 +6,7 @@ import type { Snapshot } from "../sources";
 export function Diagnostics({ sources }: { sources: Snapshot }) {
   const [info, setInfo] = useState<unknown>(null);
   const [probe, setProbe] = useState<unknown>(null);
+  const [media, setMedia] = useState<unknown>(null);
   useEffect(() => {
     invoke("panel_diagnostics").then(setInfo, (e) => setInfo(String(e)));
   }, []);
@@ -24,6 +25,16 @@ export function Diagnostics({ sources }: { sources: Snapshot }) {
         <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-hover p-3 text-xs text-muted">
           {JSON.stringify({ detected: sources, windows: probe }, null, 2)}
         </pre>
+      </div>
+      <div>
+        <p className="mb-1 text-xs text-muted">
+          Media probe: the Windows media sessions (title, app, playing) and why each source did or didn't get one.
+          Run it while the video plays if play / pause or "pause while I type" does nothing.
+        </p>
+        <button className="btn" onClick={() => invoke("probe_media").then(setMedia, (e) => setMedia(String(e)))}>
+          Probe media
+        </button>
+        <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-hover p-3 text-xs text-muted">{JSON.stringify(media, null, 2)}</pre>
       </div>
     </div>
   );

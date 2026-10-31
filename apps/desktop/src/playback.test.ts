@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canControl, IDLE_RESUME_MS, idlePause, onTick, onTyped } from "./playback";
+import { canControl, describeFailure, IDLE_RESUME_MS, idlePause, onTick, onTyped, playingNow } from "./playback";
 import type { Source } from "./sources";
 
 const video = (over: Partial<Source> = {}): Source => ({
@@ -55,5 +55,28 @@ describe("pause while typing", () => {
     const step = onTick(state, 60_000, true);
     expect(step.send).toBeNull();
     expect(step.state.paused).toBeNull();
+  });
+
+  it("resumes a paused source that dropped out of the snapshot, not trusting the stale copy", () => {
+    // The kept copy still says playing; the live snapshot no longer lists the paused Web page.
+    const lecture = video({ key: "web:lecture 3.mp4 - sharepoint", platform: "web" });
+    const { state } = onTyped(idlePause, 1000, true, lecture);
+    const gone = { candidates: [], winner: null };
+    expect(playingNow(gone, lecture)).toBe(false);
+    expect(onTick(state, 1000 + IDLE_RESUME_MS - 1, playingNow(gone, lecture)).send).toBeNull();
+    expect(onTick(state, 1000 + IDLE_RESUME_MS, playingNow(gone, lecture)).send).toEqual({ action: "play", source: lecture });
+  });
+
+  it("reads playing from the live snapshot when the source is there", () => {
+    const live = { candidates: [video({ isPlaying: false })], winner: "youtube:intro" };
+    expect(playingNow(live, video())).toBe(false);
+    expect(playingNow({ ...live, candidates: [video()] }, video({ isPlaying: false }))).toBe(true);
+  });
+});
+
+describe("media command failures", () => {
+  it("say why in plain words", () => {
+    expect(describeFailure({ kind: "titleMismatch", page: "Lecture 3.mp4 - SharePoint", media: "Untitled" })).toContain('"Untitled"');
+    expect(describeFailure({ kind: "noSession" })).toBe("Windows reports no media playing");
   });
 });

@@ -131,6 +131,7 @@ export default function App() {
           onToggle={playback.toggle}
           pauseWhileTyping={playback.pauseWhileTyping}
           onTogglePauseWhileTyping={playback.togglePauseWhileTyping}
+          lastFailure={playback.lastFailure}
         />
         <Elapsed />
         <button className="btn-primary" title="Finish (Ctrl+Enter)" onClick={() => setFinishing(true)}>
