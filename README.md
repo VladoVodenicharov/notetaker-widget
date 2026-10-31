@@ -25,6 +25,7 @@ The panel docks to the right edge of the screen and other windows resize to fit 
 |---|---|
 | Write notes | Type in the editor. Headings, task lists and code blocks (with highlighting) are supported. |
 | Save | Use **Finish**, choose a name, then **New note** (pick a folder; the last one is remembered) or continue an existing `.md` note. |
+| Discard | Use **Discard** next to Finish and confirm to throw the note away. When continuing a note, only the new text is dropped; the file is not touched. |
 | Play / pause the video | The play/pause button in the bottom bar, or **Ctrl+Alt+Space**. |
 | Jump to the editor and back | **Ctrl+Alt+N**: puts the cursor in the editor; press it again to return to the video. |
 | Pause while I type | Optional checkbox, off by default. Pauses a playing video when you start typing and resumes 5 seconds after you stop. |

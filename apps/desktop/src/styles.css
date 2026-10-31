@@ -45,7 +45,7 @@ body {
     @apply w-full rounded-lg border border-line bg-transparent px-3 py-2 text-ink outline-none focus:border-muted;
   }
   .btn {
-    @apply rounded-lg border border-line px-3 py-2 text-sm text-ink hover:bg-hover;
+    @apply rounded-lg border border-line px-3 py-2 text-sm text-ink hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent;
   }
   .btn-primary {
     @apply rounded-lg bg-ink px-4 py-2 text-sm font-medium text-surface hover:opacity-90 disabled:opacity-40;

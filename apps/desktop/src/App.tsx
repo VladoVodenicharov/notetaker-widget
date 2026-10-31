@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Info, Minus, Monitor, PanelLeft, PanelRight } from "lucide-react";
+import { Info, Minus, Monitor, PanelLeft, PanelRight, Trash2 } from "lucide-react";
 import { extensions } from "./editor/extensions";
 import { useSession } from "./session";
 import { discardDraft, loadDraft, useAutosave, type Draft } from "./autosave";
@@ -13,6 +13,7 @@ import { FinishSheet } from "./panel/FinishSheet";
 import { SavedToast } from "./panel/SavedToast";
 import { Diagnostics } from "./panel/Diagnostics";
 import { RecoveryDialog } from "./panel/RecoveryDialog";
+import { DiscardDialog } from "./panel/DiscardDialog";
 import { ResizeHandle, screenLabel, useDock, useScreens, type Screen } from "./panel/Dock";
 import { useFollowSource, useSources } from "./useFollowSource";
 import { usePlayback } from "./usePlayback";
@@ -21,6 +22,8 @@ import { VideoControls } from "./panel/VideoControls";
 export default function App() {
   const markStarted = useSession((s) => s.markStarted);
   const sessionId = useSession((s) => s.id);
+  // Something to throw away: writing started, or a title was typed.
+  const started = useSession((s) => s.startedAt !== null || s.titleEdited);
   // A draft left by a crash: undefined while checking, null once there's none (or it was handled).
   const [recovery, setRecovery] = useState<Draft | null>();
   const [restored, setRestored] = useState<Draft | null>(null);
@@ -38,6 +41,7 @@ export default function App() {
     [sessionId],
   );
   const [finishing, setFinishing] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   const [savedPath, setSavedPath] = useState<string | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [hotkeyWarning, setHotkeyWarning] = useState<string | null>(null);
@@ -134,9 +138,14 @@ export default function App() {
           lastFailure={playback.lastFailure}
         />
         <Elapsed />
-        <button className="btn-primary" title="Finish (Ctrl+Enter)" onClick={() => setFinishing(true)}>
-          Finish
-        </button>
+        <div className="flex gap-2">
+          <button className="btn flex items-center gap-1" title="Discard this note" disabled={!started} onClick={() => setDiscarding(true)}>
+            <Trash2 size={14} /> Discard
+          </button>
+          <button className="btn-primary" title="Finish (Ctrl+Enter)" onClick={() => setFinishing(true)}>
+            Finish
+          </button>
+        </div>
       </footer>
 
       {finishing && editor && (
@@ -151,6 +160,22 @@ export default function App() {
             setFinishing(false);
             setSavedPath(path);
             editor.commands.focus();
+          }}
+        />
+      )}
+      {discarding && editor && (
+        <DiscardDialog
+          title={useSession.getState().title}
+          doc={editor.getJSON()}
+          onKeep={() => {
+            setDiscarding(false);
+            editor.commands.focus();
+          }}
+          onDiscard={() => {
+            // The new session id gives a fresh editor, so undo can't bring the text back; the folder is kept.
+            discardDraft();
+            useSession.getState().reset();
+            setDiscarding(false);
           }}
         />
       )}
